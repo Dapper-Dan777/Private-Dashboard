@@ -154,6 +154,8 @@ const App = () => {
     playing: boolean;
   }>({ name: null, volume: 0.28, playing: false });
   const [ambientMuted, setAmbientMuted] = useState(false);
+  const [frontendVersion, setFrontendVersion] = useState<string | null>(null);
+  const [hasUpdate, setHasUpdate] = useState(false);
   const [importPreview, setImportPreview] = useState<{
     appState?: AppState;
     chatHistory?: typeof messages;
@@ -255,6 +257,25 @@ const App = () => {
       timer.reset();
     }
   }, [appState.currentStepId]);
+
+  useEffect(() => {
+    // Lade Frontend-Version
+    fetch("/frontend-version.json")
+      .then((res) => res.json())
+      .then((data) => {
+        setFrontendVersion(data.version || "unknown");
+        // Prüfe auf Updates
+        fetch("https://dapper-dan777.github.io/Private-Dashboard/frontend-version.json")
+          .then((res) => res.json())
+          .then((remote) => {
+            if (remote.version && remote.version !== data.version) {
+              setHasUpdate(true);
+            }
+          })
+          .catch(() => {});
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (!globalError) {
@@ -988,8 +1009,20 @@ const App = () => {
                 ☰
               </Button>
               <div>
-                <div className="text-xl font-semibold text-slate-800 dark:text-slate-100">
-                  🎓 {t("app.title")}
+                <div className="flex items-center gap-2">
+                  <div className="text-xl font-semibold text-slate-800 dark:text-slate-100">
+                    🎓 {t("app.title")}
+                  </div>
+                  {frontendVersion && (
+                    <span className="rounded-pill px-2 py-0.5 text-xs font-mono bg-primary/10 text-primary border border-primary/30">
+                      v{frontendVersion.slice(-6)}
+                    </span>
+                  )}
+                  {hasUpdate && (
+                    <span className="rounded-pill px-2 py-0.5 text-xs font-semibold bg-accent/20 text-accent border border-accent/40 animate-pulse">
+                      ✨ Update verfügbar
+                    </span>
+                  )}
                 </div>
                 <div className="text-xs text-slate-500 dark:text-slate-400">
                   {t("app.currentView")}: {sections.find((s) => s.id === section)?.label}
