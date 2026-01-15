@@ -21,8 +21,8 @@ pub fn run() {
             .build(),
         )?;
       } else {
-        // In Production: Prüfe auf Frontend-Updates
-        check_frontend_update(app.handle().clone());
+        // In Production: Lade standardmäßig von GitHub Pages (mit Offline-Fallback)
+        load_from_github_pages(app.handle().clone());
       }
       Ok(())
     })
@@ -30,60 +30,36 @@ pub fn run() {
     .expect("error while running tauri application");
 }
 
-fn check_frontend_update(app_handle: tauri::AppHandle) {
+fn load_from_github_pages(app_handle: tauri::AppHandle) {
   tauri::async_runtime::spawn(async move {
-    // Warte kurz, damit die App vollständig geladen ist
-    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-
-    let remote_version_url = "https://dapper-dan777.github.io/Private-Dashboard/frontend-version.json";
+    let github_pages_url = "https://dapper-dan777.github.io/Private-Dashboard/";
+    let version_check_url = "https://dapper-dan777.github.io/Private-Dashboard/frontend-version.json";
     
-    // Versuche lokale Version zu laden (aus dem Bundle)
-    let local_version = if let Ok(resource_dir) = app_handle.path().resource_dir() {
-      let version_path = resource_dir.join("frontend-version.json");
-      if let Ok(content) = fs::read_to_string(&version_path) {
-        serde_json::from_str::<FrontendVersion>(&content).ok()
-      } else {
-        None
-      }
-    } else {
-      None
+    // Prüfe zuerst, ob GitHub Pages erreichbar ist
+    let is_online = match reqwest::Client::new()
+      .get(version_check_url)
+      .timeout(std::time::Duration::from_secs(3))
+      .send()
+      .await
+    {
+      Ok(_) => true,
+      Err(_) => false,
     };
 
-    // Prüfe Remote-Version
-    match reqwest::get(remote_version_url).await {
-      Ok(response) => {
-        if let Ok(remote_version) = response.json::<FrontendVersion>().await {
-          let should_update = match &local_version {
-            Some(local) => remote_version.version != local.version,
-            None => true,
-          };
-
-          if should_update {
-            log::info!("Neue Frontend-Version verfügbar: {} (lokal: {:?})", 
-              remote_version.version, 
-              local_version.as_ref().map(|v| &v.version)
-            );
-            // Lade neues Frontend von GitHub Pages - mehrfach versuchen
-            for _ in 0..3 {
-              tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-              if let Some(window) = app_handle.get_webview_window("main") {
-                let result = window.eval(
-                  "if (window.location.href.includes('github.io')) { console.log('Already on GitHub Pages'); } else { window.location.replace('https://dapper-dan777.github.io/Private-Dashboard/'); }"
-                );
-                if result.is_ok() {
-                  break;
-                }
-              }
-            }
-          } else {
-            log::info!("Frontend ist auf dem neuesten Stand: {}", remote_version.version);
-          }
-        }
+    if is_online {
+      log::info!("GitHub Pages erreichbar - lade Frontend von GitHub Pages");
+      // Lade direkt von GitHub Pages
+      if let Some(window) = app_handle.get_webview_window("main") {
+        // Warte kurz, damit das Fenster vollständig geladen ist
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        let _ = window.eval(&format!(
+          "window.location.replace('{}');",
+          github_pages_url
+        ));
       }
-      Err(e) => {
-        log::warn!("Konnte Remote-Version nicht prüfen: {}. App lädt lokal (offline-fähig).", e);
-        // Bei Fehler: App lädt lokal (offline-fähig)
-      }
+    } else {
+      log::info!("GitHub Pages nicht erreichbar - App lädt lokal (offline-fähig)");
+      // Bei Offline: App lädt lokal (aus dem Bundle)
     }
   });
 }
