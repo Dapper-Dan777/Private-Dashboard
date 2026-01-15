@@ -26,3 +26,5 @@ tauri-plugin-log = "2"
 tauri-plugin-updater = "2"
 reqwest = { version = "0.12", features = ["json"] }
 tokio = { version = "1", features = ["time"] }
+base64 = { version = "0.22", default-features = true, features = ["std"] }
+urlencoding = "2.1"
