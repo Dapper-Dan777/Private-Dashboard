@@ -33,7 +33,7 @@ pub fn run() {
 fn check_frontend_update(app_handle: tauri::AppHandle) {
   tauri::async_runtime::spawn(async move {
     // Warte kurz, damit die App vollständig geladen ist
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
     let remote_version_url = "https://dapper-dan777.github.io/Private-Dashboard/frontend-version.json";
     
@@ -63,11 +63,17 @@ fn check_frontend_update(app_handle: tauri::AppHandle) {
               remote_version.version, 
               local_version.as_ref().map(|v| &v.version)
             );
-            // Lade neues Frontend von GitHub Pages
-            if let Some(window) = app_handle.get_webview_window("main") {
-              let _ = window.eval(
-                "window.location.href = 'https://dapper-dan777.github.io/Private-Dashboard/';"
-              );
+            // Lade neues Frontend von GitHub Pages - mehrfach versuchen
+            for _ in 0..3 {
+              tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+              if let Some(window) = app_handle.get_webview_window("main") {
+                let result = window.eval(
+                  "if (window.location.href.includes('github.io')) { console.log('Already on GitHub Pages'); } else { window.location.replace('https://dapper-dan777.github.io/Private-Dashboard/'); }"
+                );
+                if result.is_ok() {
+                  break;
+                }
+              }
             }
           } else {
             log::info!("Frontend ist auf dem neuesten Stand: {}", remote_version.version);
