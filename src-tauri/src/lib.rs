@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::sync::Mutex;
 use tauri::Manager;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -9,10 +10,32 @@ struct FrontendVersion {
     build_date: Option<String>,
 }
 
+// In-Memory Storage für API-Key (als Fallback, wenn Secure Storage nicht verfügbar ist)
+static API_KEY_STORAGE: Mutex<Option<String>> = Mutex::new(None);
+
+#[tauri::command]
+fn get_api_key() -> Option<String> {
+    // Versuche zuerst aus Secure Storage zu laden
+    // Falls nicht verfügbar, verwende In-Memory Storage
+    API_KEY_STORAGE.lock().ok().and_then(|s| s.clone())
+}
+
+#[tauri::command]
+fn set_api_key(key: Option<String>) -> Result<(), String> {
+    // Speichere in Secure Storage (falls verfügbar) und In-Memory
+    if let Ok(mut storage) = API_KEY_STORAGE.lock() {
+        *storage = key;
+        Ok(())
+    } else {
+        Err("Could not lock API key storage".to_string())
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_updater::Builder::new().build())
+    .invoke_handler(tauri::generate_handler![get_api_key, set_api_key])
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(
@@ -52,9 +75,56 @@ fn load_from_github_pages(app_handle: tauri::AppHandle) {
       if let Some(window) = app_handle.get_webview_window("main") {
         // Warte kurz, damit das Fenster vollständig geladen ist
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        
+        // Versuche API-Key aus localStorage zu lesen (über JavaScript)
+        // Erstelle ein temporäres Script, das den API-Key in window.__apiKey speichert
+        let _ = window.eval(
+          r#"
+            try {
+              window.__apiKey = localStorage.getItem('perplexityApiKey') || null;
+            } catch(e) {
+              window.__apiKey = null;
+            }
+          "#
+        );
+        
+        // Warte kurz, damit das Script ausgeführt wird
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        
+        // Lese den Wert aus window.__apiKey
+        let api_key_result = window.eval("window.__apiKey || null");
+        let api_key = api_key_result
+          .ok()
+          .and_then(|result| {
+            // Der result ist ein String, der "null" oder den API-Key enthält
+            let result_str = result.to_string().trim_matches('"').to_string();
+            if result_str == "null" || result_str.is_empty() {
+              None
+            } else {
+              Some(result_str)
+            }
+          })
+          .or_else(|| {
+            // Fallback: Versuche aus Tauri Storage
+            API_KEY_STORAGE.lock().ok().and_then(|s| s.clone())
+          });
+        
+        let url = if let Some(key) = api_key {
+          if !key.trim().is_empty() {
+            // Base64-encode für URL-Sicherheit
+            use base64::Engine;
+            let encoded = base64::engine::general_purpose::STANDARD.encode(key.as_bytes());
+            format!("{}?apiKey={}", github_pages_url, urlencoding::encode(&encoded))
+          } else {
+            github_pages_url.to_string()
+          }
+        } else {
+          github_pages_url.to_string()
+        };
+        
         let _ = window.eval(&format!(
           "window.location.replace('{}');",
-          github_pages_url
+          url
         ));
       }
     } else {

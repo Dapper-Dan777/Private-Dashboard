@@ -231,6 +231,52 @@ const App = () => {
         })),
     });
 
+  // Lade API-Key aus URL (wenn von GitHub Pages mit Parameter geladen)
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const apiKeyParam = urlParams.get("apiKey");
+    if (apiKeyParam) {
+      try {
+        // Base64-decode
+        const decoded = atob(decodeURIComponent(apiKeyParam));
+        if (decoded && decoded.trim().length > 0) {
+          saveApiKey(decoded);
+          setApiKey(decoded);
+          setApiKeyInput(decoded);
+          // Entferne Parameter aus URL
+          urlParams.delete("apiKey");
+          const newUrl = window.location.pathname + (urlParams.toString() ? "?" + urlParams.toString() : "");
+          window.history.replaceState({}, "", newUrl);
+        }
+      } catch (e) {
+        console.warn("Could not decode API key from URL:", e);
+      }
+    }
+    
+    // Versuche auch, API-Key von Tauri zu laden (falls verfügbar)
+    (async () => {
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        const localKey = loadApiKey();
+        const tauriKey = await invoke<string | null>("get_api_key");
+        
+        if (localKey && localKey.trim().length > 0) {
+          // Synchronisiere localStorage -> Tauri Storage
+          if (!tauriKey || tauriKey !== localKey) {
+            await invoke("set_api_key", { key: localKey });
+          }
+        } else if (tauriKey && tauriKey.trim().length > 0) {
+          // Synchronisiere Tauri Storage -> localStorage
+          saveApiKey(tauriKey);
+          setApiKey(tauriKey);
+          setApiKeyInput(tauriKey);
+        }
+      } catch {
+        // Tauri nicht verfügbar - ignoriere
+      }
+    })();
+  }, []);
+
   useEffect(() => {
     document.documentElement.classList.toggle("dark", theme === "dark");
     try {
@@ -464,11 +510,19 @@ const App = () => {
     timer.setSeconds(seconds);
   };
 
-  const handleSaveApiKey = (key: string) => {
+  const handleSaveApiKey = async (key: string) => {
     const trimmed = key.trim();
     saveApiKey(trimmed);
     setApiKey(trimmed.length > 0 ? trimmed : null);
     setApiKeyInput(trimmed);
+    
+    // Speichere auch in Tauri's Storage (falls verfügbar)
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("set_api_key", { key: trimmed.length > 0 ? trimmed : null });
+    } catch {
+      // Tauri nicht verfügbar (z.B. im Browser) - ignoriere
+    }
   };
 
   const downloadFile = (content: string, filename: string, type: string) => {
