@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
-use std::fs;
 use std::sync::Mutex;
 use tauri::Manager;
+use base64::Engine;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct FrontendVersion {
@@ -73,46 +73,15 @@ fn load_from_github_pages(app_handle: tauri::AppHandle) {
       log::info!("GitHub Pages erreichbar - lade Frontend von GitHub Pages");
       // Lade direkt von GitHub Pages
       if let Some(window) = app_handle.get_webview_window("main") {
-        // Warte kurz, damit das Fenster vollständig geladen ist
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        // Warte länger, damit das Frontend den API-Key aus localStorage lesen und in Tauri Storage speichern kann
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         
-        // Versuche API-Key aus localStorage zu lesen (über JavaScript)
-        // Erstelle ein temporäres Script, das den API-Key in window.__apiKey speichert
-        let _ = window.eval(
-          r#"
-            try {
-              window.__apiKey = localStorage.getItem('perplexityApiKey') || null;
-            } catch(e) {
-              window.__apiKey = null;
-            }
-          "#
-        );
-        
-        // Warte kurz, damit das Script ausgeführt wird
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        
-        // Lese den Wert aus window.__apiKey
-        let api_key_result = window.eval("window.__apiKey || null");
-        let api_key = api_key_result
-          .ok()
-          .and_then(|result| {
-            // Der result ist ein String, der "null" oder den API-Key enthält
-            let result_str = result.to_string().trim_matches('"').to_string();
-            if result_str == "null" || result_str.is_empty() {
-              None
-            } else {
-              Some(result_str)
-            }
-          })
-          .or_else(|| {
-            // Fallback: Versuche aus Tauri Storage
-            API_KEY_STORAGE.lock().ok().and_then(|s| s.clone())
-          });
+        // Versuche API-Key aus Tauri Storage zu lesen
+        let api_key = API_KEY_STORAGE.lock().ok().and_then(|s| s.clone());
         
         let url = if let Some(key) = api_key {
           if !key.trim().is_empty() {
             // Base64-encode für URL-Sicherheit
-            use base64::Engine;
             let encoded = base64::engine::general_purpose::STANDARD.encode(key.as_bytes());
             format!("{}?apiKey={}", github_pages_url, urlencoding::encode(&encoded))
           } else {
